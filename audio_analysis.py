@@ -34,7 +34,7 @@ def process_and_send_to_thingspeak(filepath):
         normalized = (data - dc_bias) / np.max(np.abs(data - dc_bias))
 
         # === Sampling rate (must match Arduino) ===
-        sr = 13000
+        sr = 22050
 
         # === Octave band center frequencies (Hz) ===
         center_freqs = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -45,7 +45,7 @@ def process_and_send_to_thingspeak(filepath):
         N = len(normalized)
         fft_vals = np.fft.rfft(normalized)
         freqs = np.fft.rfftfreq(N, d=1/sr)
-        power_spectrum = (np.abs(fft_vals) * 2 / N) * 2
+        power_spectrum = (np.abs(fft_vals))**2  / N**2
 
         # === SPL per octave band ===
         spls = []
