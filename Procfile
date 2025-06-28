@@ -1,3 +1,4 @@
-web: gunicorn server:app --timeout 120
+worker: python audio_analysis.py
+
 
 
