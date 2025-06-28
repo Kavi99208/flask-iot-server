@@ -1,5 +1,4 @@
-flask
-numpy
-matplotlib
+supabase
 requests
-gunicorn
+pytz
+schedule
