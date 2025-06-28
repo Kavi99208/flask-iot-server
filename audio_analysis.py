@@ -1,88 +1,82 @@
-import numpy as np
-import os
-import datetime
 import requests
-import sys
+import time
+import pytz
+from datetime import datetime, timedelta
+from math import log10, pow
+from supabase import create_client, Client
 
-# Ensure real-time terminal output
-sys.stdout.reconfigure(line_buffering=True)
+# ---------------- CONFIG ----------------
+SUPABASE_URL = "https://idcrtezkbidtjfkyjvuq.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlkY3J0ZXprYmlkdGpma3lqdnVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA2OTE0MjQsImV4cCI6MjA2NjI2NzQyNH0.LafFRZYj-bQyr5uhhJT6l4GF7CKkoygeHBGsaliJXNc"
+THING_SPEAK_API_KEY = "YOUR_THINGSPEAK_API_KEY"
+THING_SPEAK_CHANNEL_URL = "https://api.thingspeak.com/update"
 
-# ThingSpeak API credentials
-THINGSPEAK_API_KEY = "4W4MHWIL7SLL2RXG"
-THINGSPEAK_URL = "https://api.thingspeak.com/update"
+# ---------------- INIT ----------------
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+IST = pytz.timezone('Asia/Kolkata')
 
-# Extract timestamp from filename (assumes format: YYMMDD_HHMMSS.csv)
-def extract_time_from_filename(filename):
-    name = os.path.basename(filename).replace(".csv", "")
-    try:
-        dt = datetime.datetime.strptime(name, "%y%m%d_%H%M%S")
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except Exception as e:
-        print(f"⚠️ Could not parse timestamp from filename '{name}': {e}")
-        return "1970-01-01 00:00:00"
+# ---------------- HELPERS ----------------
+def get_current_minute():
+    now = datetime.now(IST)
+    return now.replace(second=0, microsecond=0)
 
-def process_and_send_to_thingspeak(filepath):
-    try:
-        # === Load microphone data from CSV ===
-        data = np.loadtxt(filepath, skiprows=1)
-        if len(data) == 0:
-            print(f"⚠️ Empty file: {filepath}")
+def fetch_data_from_supabase(start, end):
+    query = (
+        supabase.table("sound_data")
+        .select("timestamp, db_value, device_id")
+        .gte("timestamp", start.isoformat())
+        .lt("timestamp", end.isoformat())
+    )
+    response = query.execute()
+    return response.data
+
+def group_and_log_addition(data):
+    result = {1: [], 2: []}
+    for row in data:
+        dev = row['device_id']
+        db = row['db_value']
+        if db != -184.87:  # Skip invalid readings
+            result[dev].append(db)
+
+    def log_add(values):
+        if not values:
             return None
+        powers = [pow(10, v / 10) for v in values]
+        avg_power = sum(powers) / len(powers)
+        return round(10 * log10(avg_power), 2)
 
-        # === Normalize signal ===
-        dc_bias = np.mean(data)
-        normalized = (data - dc_bias) / np.max(np.abs(data - dc_bias))
+    return {dev: log_add(vals) for dev, vals in result.items()}
 
-        # === Sampling rate (must match Arduino) ===
-        sr = 22050
+def send_to_thingspeak(device1_value, device2_value):
+    params = {
+        'api_key': THING_SPEAK_API_KEY,
+        'field1': device1_value if device1_value is not None else '',
+        'field2': device2_value if device2_value is not None else '',
+    }
+    response = requests.get(THING_SPEAK_CHANNEL_URL, params=params)
+    if response.status_code == 200:
+        print(f"✅ Sent to ThingSpeak: Device 1 = {device1_value}, Device 2 = {device2_value}")
+    else:
+        print(f"❌ Failed to send to ThingSpeak: {response.text}")
 
-        # === Octave band center frequencies (Hz) ===
-        center_freqs = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
-        a_weighting = [-39.4, -26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1, -6.6]
-        ref_pressure = 20e-6
+# ---------------- MAIN LOOP ----------------
+print("🔁 Starting Real-Time Audio Analysis...")
+while True:
+    try:
+        end_time = get_current_minute()
+        start_time = end_time - timedelta(minutes=1)
 
-        # === FFT & Power Spectrum ===
-        N = len(normalized)
-        fft_vals = np.fft.rfft(normalized)
-        freqs = np.fft.rfftfreq(N, d=1/sr)
-        power_spectrum = (np.abs(fft_vals))**2  / N**2
+        print(f"⏳ Fetching from {start_time} to {end_time}...")
+        data = fetch_data_from_supabase(start_time, end_time)
+        log_added = group_and_log_addition(data)
 
-        # === SPL per octave band ===
-        spls = []
-        for fc in center_freqs:
-            f_low = fc / np.sqrt(2)
-            f_high = fc * np.sqrt(2)
-            band_indices = np.where((freqs >= f_low) & (freqs <= f_high))[0]
-            band_power = np.sum(power_spectrum[band_indices])
-            rms = np.sqrt(band_power) if band_power > 0 else 1e-12
-            spl = 20 * np.log10(rms * 0.165 / ref_pressure)
-            spls.append(spl)
-
-        # === Apply A-weighting ===
-        a_weighted_spl = [s + a for s, a in zip(spls, a_weighting)]
-        total_spl_a = 10 * np.log10(np.sum(10 ** (np.array(a_weighted_spl) / 10)))
-
-        # === Extract timestamp from filename ===
-        timestamp = extract_time_from_filename(filepath)
-
-        # === Send to ThingSpeak ===
-        payload = {
-            "api_key": THINGSPEAK_API_KEY,
-            "field1": f"{total_spl_a:.2f}",
-            "field2": timestamp
-        }
-
-        r = requests.post(THINGSPEAK_URL, data=payload)
-        if r.status_code == 200:
-            print(f"📡 Uploaded to ThingSpeak: {total_spl_a:.2f} dB(A) | Time: {timestamp} ✅")
-        else:
-            print(f"❌ ThingSpeak upload failed (HTTP {r.status_code})")
-
-        return total_spl_a
+        print(f"📊 Log-Added Data: {log_added}")
+        send_to_thingspeak(log_added.get(1), log_added.get(2))
 
     except Exception as e:
-        print(f"❌ Error processing file {filepath}:", e)
-        return None
+        print(f"⚠ Error: {e}")
+
+    time.sleep(60)
 
 
 
