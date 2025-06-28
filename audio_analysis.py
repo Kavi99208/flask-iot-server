@@ -8,7 +8,7 @@ from supabase import create_client, Client
 # ---------------- CONFIG ----------------
 SUPABASE_URL = "https://idcrtezkbidtjfkyjvuq.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlkY3J0ZXprYmlkdGpma3lqdnVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA2OTE0MjQsImV4cCI6MjA2NjI2NzQyNH0.LafFRZYj-bQyr5uhhJT6l4GF7CKkoygeHBGsaliJXNc"
-THING_SPEAK_API_KEY = "YOUR_THINGSPEAK_API_KEY"
+THING_SPEAK_API_KEY = "4W4MHWIL7SLL2RXG"
 THING_SPEAK_CHANNEL_URL = "https://api.thingspeak.com/update"
 
 # ---------------- INIT ----------------
